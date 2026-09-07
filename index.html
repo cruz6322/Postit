@@ -221,9 +221,6 @@
       const isResizingRef = useRef(false);
       const resizeStartRef = useRef({ startX: 0, startY: 0, startWidth: 320, startHeight: 340 });
 
-      // 마우스 우클릭 컨텍스트 메뉴 상태
-      const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0 });
-
       const [showPalette, setShowPalette] = useState(false);
       const [showFontMenu, setShowFontMenu] = useState(false);
       const [showLinkInput, setShowLinkInput] = useState(false);
@@ -237,33 +234,6 @@
       const currentTheme = PASTEL_THEMES.find(t => t.id === note.themeId) || PASTEL_THEMES[0];
       const currentFont = FONT_FAMILIES.find(f => f.id === note.fontFamily) || FONT_FAMILIES[0];
       const currentSize = FONT_SIZES.find(s => s.id === note.fontSize) || FONT_SIZES[1];
-
-      // 외부 클릭 시 우클릭 컨텍스트 메뉴 닫기
-      useEffect(() => {
-        const handleCloseMenu = () => {
-          setContextMenu(prev => prev.visible ? { ...prev, visible: false } : prev);
-        };
-        if (contextMenu.visible) {
-          window.addEventListener('click', handleCloseMenu);
-          window.addEventListener('contextmenu', handleCloseMenu);
-        }
-        return () => {
-          window.removeEventListener('click', handleCloseMenu);
-          window.removeEventListener('contextmenu', handleCloseMenu);
-        };
-      }, [contextMenu.visible]);
-
-      // 1) 마우스 우측 버튼 클릭 이벤트 핸들러 (컨텍스트 메뉴)
-      const handleContextMenu = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onBringToFront(note.id);
-        setContextMenu({
-          visible: true,
-          x: e.clientX,
-          y: e.clientY
-        });
-      };
 
       // 드래그 시작 (헤더를 마우스 다운했을 때)
       const handleMouseDownHeader = (e) => {
@@ -421,7 +391,6 @@
         <div
           ref={cardRef}
           onClick={() => onBringToFront(note.id)}
-          onContextMenu={handleContextMenu}
           onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
@@ -788,11 +757,27 @@
                   />
                 </div>
 
-                {/* 우측: 타임스탬프 & 우클릭 가이드 */}
-                <div className="flex items-center gap-1.5 text-[10px] text-slate-500 opacity-75">
-                  <span title="우클릭 시 메뉴 표시">우클릭:메뉴</span>
-                  <span>•</span>
-                  <span>{note.createdAt ? new Date(note.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                {/* 우측: 타임스탬프 & 하단 삭제 탭 */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-500 opacity-70">
+                    {note.createdAt ? new Date(note.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                  </span>
+
+                  {/* 하단 메모 삭제 탭 / 버튼 */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm('이 메모를 삭제하시겠습니까?')) {
+                        onDelete(note.id);
+                      }
+                    }}
+                    title="이 메모 삭제"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-600 text-rose-600 hover:text-white font-bold text-xs transition-all shadow-xs active:scale-95 border border-rose-200 hover:border-rose-600"
+                  >
+                    <Icon.Trash className="w-3.5 h-3.5" />
+                    <span>삭제</span>
+                  </button>
                 </div>
               </div>
 
@@ -807,103 +792,6 @@
                   <circle cx="4" cy="8" r="1.2" />
                   <circle cx="8" cy="4" r="1.2" />
                 </svg>
-              </div>
-            </div>
-          )}
-
-          {/* --- 1) 마우스 우클릭 시 표시되는 컨텍스트 메뉴 (메모 삭제 기능 포함) --- */}
-          {contextMenu.visible && (
-            <div
-              style={{
-                position: 'fixed',
-                left: Math.min(contextMenu.x, window.innerWidth - 180),
-                top: Math.min(contextMenu.y, window.innerHeight - 220),
-                zIndex: 99999,
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-44 bg-white/95 backdrop-blur-md rounded-xl shadow-2xl border border-slate-200 py-1 text-xs text-slate-700 select-none animate-in fade-in zoom-in-95 duration-100"
-            >
-              <div className="px-3 py-1 text-[11px] font-semibold text-slate-400 border-b border-slate-100 flex items-center justify-between">
-                <span>메모 옵션</span>
-                <span className="text-[10px] text-slate-400">포스트잇</span>
-              </div>
-
-              {/* [요구사항 1] 메모 삭제 버튼 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenu({ visible: false, x: 0, y: 0 });
-                  if (confirm('이 메모를 삭제하시겠습니까?')) {
-                    onDelete(note.id);
-                  }
-                }}
-                className="w-full px-3 py-2 text-left hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-2 transition-colors"
-              >
-                <Icon.Trash className="w-3.5 h-3.5 text-rose-500" />
-                <span>메모 삭제</span>
-              </button>
-
-              <div className="my-1 border-t border-slate-100"></div>
-
-              {/* 새 메모 추가 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenu({ visible: false, x: 0, y: 0 });
-                  onAddRelativeNote(note.x + 30, note.y + 30);
-                }}
-                className="w-full px-3 py-1.5 text-left hover:bg-slate-100 flex items-center gap-2 transition-colors"
-              >
-                <Icon.Plus className="w-3.5 h-3.5 text-slate-500" />
-                <span>새 메모 추가</span>
-              </button>
-
-              {/* 상단 핀 고정 토글 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenu({ visible: false, x: 0, y: 0 });
-                  onUpdate(note.id, { isPinned: !note.isPinned });
-                }}
-                className="w-full px-3 py-1.5 text-left hover:bg-slate-100 flex items-center gap-2 transition-colors"
-              >
-                <Icon.Pin pinned={note.isPinned} className="w-3.5 h-3.5 text-slate-500" />
-                <span>{note.isPinned ? '상단 핀 해제' : '상단 핀 고정'}</span>
-              </button>
-
-              {/* 접기 / 펼치기 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenu({ visible: false, x: 0, y: 0 });
-                  onUpdate(note.id, { isCollapsed: !note.isCollapsed });
-                }}
-                className="w-full px-3 py-1.5 text-left hover:bg-slate-100 flex items-center gap-2 transition-colors"
-              >
-                {note.isCollapsed ? <Icon.ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <Icon.ChevronUp className="w-3.5 h-3.5 text-slate-500" />}
-                <span>{note.isCollapsed ? '메모 펼치기' : '메모 접기'}</span>
-              </button>
-
-              <div className="my-1 border-t border-slate-100"></div>
-
-              {/* 빠른 배경색 변경 */}
-              <div className="px-3 py-1.5">
-                <span className="text-[10px] text-slate-400 block mb-1">배경색 변경</span>
-                <div className="flex gap-1">
-                  {PASTEL_THEMES.map(theme => (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      style={{ backgroundColor: theme.dot }}
-                      title={theme.name}
-                      onClick={() => {
-                        onUpdate(note.id, { themeId: theme.id });
-                        setContextMenu({ visible: false, x: 0, y: 0 });
-                      }}
-                      className={`w-4 h-4 rounded-full border border-black/20 hover:scale-125 transition-transform ${note.themeId === theme.id ? 'ring-1 ring-blue-500' : ''}`}
-                    />
-                  ))}
-                </div>
               </div>
             </div>
           )}
