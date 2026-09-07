@@ -142,6 +142,13 @@ export function StickyNoteCard({
   const isDraggingRef = useRef(false);
   const dragStartOffsetRef = useRef({ x: 0, y: 0 });
 
+  // 마우스 드래그 크기 조절 (Resize) ref
+  const isResizingRef = useRef(false);
+  const resizeStartRef = useRef({ startX: 0, startY: 0, startWidth: 330, startHeight: 340 });
+
+  // 마우스 우클릭 컨텍스트 메뉴 상태
+  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0 });
+
   const [showPalette, setShowPalette] = useState(false);
   const [showFontMenu, setShowFontMenu] = useState(false);
   const [showLinkInput, setShowLinkInput] = useState(false);
@@ -155,6 +162,33 @@ export function StickyNoteCard({
   const currentTheme = PASTEL_THEMES.find(t => t.id === note.themeId) || PASTEL_THEMES[0];
   const currentFont = FONT_FAMILIES.find(f => f.id === note.fontFamily) || FONT_FAMILIES[0];
   const currentSize = FONT_SIZES.find(s => s.id === note.fontSize) || FONT_SIZES[1];
+
+  // 외부 클릭 시 우클릭 컨텍스트 메뉴 닫기
+  useEffect(() => {
+    const handleCloseMenu = () => {
+      setContextMenu(prev => prev.visible ? { ...prev, visible: false } : prev);
+    };
+    if (contextMenu.visible) {
+      window.addEventListener('click', handleCloseMenu);
+      window.addEventListener('contextmenu', handleCloseMenu);
+    }
+    return () => {
+      window.removeEventListener('click', handleCloseMenu);
+      window.removeEventListener('contextmenu', handleCloseMenu);
+    };
+  }, [contextMenu.visible]);
+
+  // 1) 마우스 우측 버튼 클릭 이벤트 핸들러 (컨텍스트 메뉴)
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onBringToFront(note.id);
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
 
   // 드래그 시작 이벤트 핸들러
   const handleMouseDownHeader = (e) => {
@@ -177,6 +211,39 @@ export function StickyNoteCard({
 
     const handleMouseUp = () => {
       isDraggingRef.current = false;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // 2) 마우스 드래그로 크기 조절 시작 핸들러
+  const handleMouseDownResize = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onBringToFront(note.id);
+
+    isResizingRef.current = true;
+    resizeStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: note.width || 330,
+      startHeight: note.height || 340,
+    };
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isResizingRef.current) return;
+      const deltaX = moveEvent.clientX - resizeStartRef.current.startX;
+      const deltaY = moveEvent.clientY - resizeStartRef.current.startY;
+      const newWidth = Math.max(250, Math.min(900, resizeStartRef.current.startWidth + deltaX));
+      const newHeight = Math.max(180, Math.min(1000, resizeStartRef.current.startHeight + deltaY));
+      onUpdate(note.id, { width: newWidth, height: newHeight });
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -259,12 +326,14 @@ export function StickyNoteCard({
     <div
       ref={cardRef}
       onClick={() => onBringToFront(note.id)}
+      onContextMenu={handleContextMenu}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDrop}
       style={{
         transform: `translate3d(${note.x}px, ${note.y}px, 0)`,
         width: `${note.width || 330}px`,
+        height: note.isCollapsed ? 'auto' : `${note.height || 340}px`,
         zIndex: note.zIndex || 1,
         position: 'absolute',
         top: 0,
@@ -277,7 +346,7 @@ export function StickyNoteCard({
       {/* 카드 상단 드래그 헤더 바 */}
       <div
         onMouseDown={handleMouseDownHeader}
-        className={`flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing border-b ${currentTheme.border} ${currentTheme.headerBg} select-none`}
+        className={`flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing border-b ${currentTheme.border} ${currentTheme.headerBg} select-none shrink-0`}
       >
         <div className="flex items-center space-x-1.5">
           <button
@@ -335,163 +404,165 @@ export function StickyNoteCard({
 
       {/* 본문 콘텐츠 */}
       {!note.isCollapsed && (
-        <div className="flex flex-col flex-1 p-3">
+        <div className="flex flex-col flex-1 p-3 min-h-0 overflow-hidden relative">
           <textarea
             value={note.content}
             onChange={(e) => onUpdate(note.id, { content: e.target.value })}
-            placeholder="여기에 메모를 입력하세요... (클릭하여 편집)"
-            rows={note.images?.length || note.files?.length || note.links?.length ? 4 : 7}
-            className={`w-full bg-transparent resize-none focus:outline-none placeholder-slate-400 select-text ${currentFont.className} ${currentSize.className} ${currentTheme.text}`}
+            placeholder="여기에 메모를 입력하세요... (클릭하여 편집, 우클릭 시 삭제 메뉴)"
+            className={`w-full flex-1 min-h-[70px] bg-transparent resize-none focus:outline-none placeholder-slate-400 select-text ${currentFont.className} ${currentSize.className} ${currentTheme.text}`}
           />
 
-          {/* 외부 링크 목록 */}
-          {note.links && note.links.length > 0 && (
-            <div className="mt-2.5 pt-2 border-t border-black/10 space-y-1">
-              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
-                <LinkIcon className="w-3 h-3" /> 바로가기 링크 ({note.links.length})
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {note.links.map(link => (
-                  <div
-                    key={link.id}
-                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-white/70 hover:bg-white text-blue-700 shadow-sm border border-blue-200/60 transition-colors"
-                  >
-                    <a
-                      href={link.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={link.url}
-                      className="flex items-center gap-1 hover:underline truncate max-w-[170px]"
+          {/* 스크롤 가능한 부가 콘텐츠 영역 (링크 / 사진 / 파일) */}
+          <div className="overflow-y-auto max-h-[160px] pr-0.5 space-y-2">
+            {/* 외부 링크 목록 */}
+            {note.links && note.links.length > 0 && (
+              <div className="pt-2 border-t border-black/10 space-y-1">
+                <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                  <LinkIcon className="w-3 h-3" /> 바로가기 링크 ({note.links.length})
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {note.links.map(link => (
+                    <div
+                      key={link.id}
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-white/70 hover:bg-white text-blue-700 shadow-sm border border-blue-200/60 transition-colors"
                     >
-                      <ExternalLink className="w-3 h-3 shrink-0" />
-                      <span className="truncate">{link.title}</span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => onUpdate(note.id, { links: note.links.filter(l => l.id !== link.id) })}
-                      className="text-slate-400 hover:text-rose-500"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 이미지 썸네일 미리보기 */}
-          {note.images && note.images.length > 0 && (
-            <div className="mt-2.5 pt-2 border-t border-black/10">
-              <div className="text-[11px] font-semibold text-slate-500 mb-1.5 flex items-center gap-1">
-                <ImageIcon className="w-3 h-3" /> 첨부된 사진 ({note.images.length})
-              </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {note.images.map(img => (
-                  <div
-                    key={img.id}
-                    className="relative group rounded-lg overflow-hidden aspect-video bg-black/5 border border-black/10 cursor-pointer shadow-sm"
-                    onClick={() => onOpenLightbox(img.url, img.name)}
-                  >
-                    <img src={img.url} alt={img.name} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onUpdate(note.id, { images: note.images.filter(i => i.id !== img.id) });
-                      }}
-                      title="이미지 삭제"
-                      className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-rose-600 transition-all"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 로컬 파일 첨부 목록 */}
-          {note.files && note.files.length > 0 && (
-            <div className="mt-2.5 pt-2 border-t border-black/10 space-y-1">
-              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
-                <Paperclip className="w-3 h-3" /> 첨부 파일 ({note.files.length})
-              </div>
-              <div className="space-y-1">
-                {note.files.map(file => (
-                  <div
-                    key={file.id}
-                    className="flex items-center justify-between px-2 py-1 rounded bg-white/60 hover:bg-white/90 border border-black/10 text-xs shadow-sm transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
-                      <FileText className="w-3.5 h-3.5 text-slate-600 shrink-0" />
-                      <span className="truncate font-medium text-slate-800" title={file.name}>{file.name}</span>
-                      <span className="text-[10px] text-slate-400 shrink-0">({formatFileSize(file.size)})</span>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
                       <a
-                        href={file.url}
-                        download={file.name}
-                        title="다운로드"
-                        className="p-1 hover:bg-blue-100 text-blue-600 rounded transition-colors"
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={link.url}
+                        className="flex items-center gap-1 hover:underline truncate max-w-[170px]"
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{link.title}</span>
                       </a>
                       <button
                         type="button"
-                        onClick={() => onUpdate(note.id, { files: note.files.filter(f => f.id !== file.id) })}
-                        title="파일 제거"
-                        className="p-1 hover:bg-rose-100 text-rose-500 rounded transition-colors"
+                        onClick={() => onUpdate(note.id, { links: note.links.filter(l => l.id !== link.id) })}
+                        className="text-slate-400 hover:text-rose-500"
                       >
-                        <X className="w-3.5 h-3.5" />
+                        <X className="w-3 h-3" />
                       </button>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* 외부 링크 추가 모달 */}
-          {showLinkInput && (
-            <form onSubmit={handleAddLink} className="mt-2.5 p-2 bg-white/95 rounded-lg border border-slate-300 shadow-md space-y-1.5 text-xs">
-              <div className="font-semibold text-slate-700 flex justify-between items-center">
-                <span>외부 웹사이트 링크 추가</span>
-                <button type="button" onClick={() => setShowLinkInput(false)} className="text-slate-400 hover:text-slate-700">
-                  <X className="w-3 h-3" />
-                </button>
+            {/* 이미지 썸네일 미리보기 */}
+            {note.images && note.images.length > 0 && (
+              <div className="pt-2 border-t border-black/10">
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5 flex items-center gap-1">
+                  <ImageIcon className="w-3 h-3" /> 첨부된 사진 ({note.images.length})
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {note.images.map(img => (
+                    <div
+                      key={img.id}
+                      className="relative group rounded-lg overflow-hidden aspect-video bg-black/5 border border-black/10 cursor-pointer shadow-sm"
+                      onClick={() => onOpenLightbox(img.url, img.name)}
+                    >
+                      <img src={img.url} alt={img.name} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate(note.id, { images: note.images.filter(i => i.id !== img.id) });
+                        }}
+                        title="이미지 삭제"
+                        className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-rose-600 transition-all"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <input
-                type="text"
-                placeholder="https://example.com"
-                value={newLinkUrl}
-                onChange={(e) => setNewLinkUrl(e.target.value)}
-                className="w-full px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-blue-500"
-                autoFocus
-              />
-              <input
-                type="text"
-                placeholder="링크 이름 (선택)"
-                value={newLinkTitle}
-                onChange={(e) => setNewLinkTitle(e.target.value)}
-                className="w-full px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-blue-500"
-              />
-              <div className="flex justify-end gap-1 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowLinkInput(false)}
-                  className="px-2 py-0.5 rounded text-slate-600 hover:bg-slate-200"
-                >
-                  취소
-                </button>
-                <button type="submit" className="px-2.5 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">
-                  추가
-                </button>
+            )}
+
+            {/* 로컬 파일 첨부 목록 */}
+            {note.files && note.files.length > 0 && (
+              <div className="pt-2 border-t border-black/10 space-y-1">
+                <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                  <Paperclip className="w-3 h-3" /> 첨부 파일 ({note.files.length})
+                </div>
+                <div className="space-y-1">
+                  {note.files.map(file => (
+                    <div
+                      key={file.id}
+                      className="flex items-center justify-between px-2 py-1 rounded bg-white/60 hover:bg-white/90 border border-black/10 text-xs shadow-sm transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                        <FileText className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+                        <span className="truncate font-medium text-slate-800" title={file.name}>{file.name}</span>
+                        <span className="text-[10px] text-slate-400 shrink-0">({formatFileSize(file.size)})</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <a
+                          href={file.url}
+                          download={file.name}
+                          title="다운로드"
+                          className="p-1 hover:bg-blue-100 text-blue-600 rounded transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => onUpdate(note.id, { files: note.files.filter(f => f.id !== file.id) })}
+                          title="파일 제거"
+                          className="p-1 hover:bg-rose-100 text-rose-500 rounded transition-colors"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </form>
-          )}
+            )}
+
+            {/* 외부 링크 추가 모달 */}
+            {showLinkInput && (
+              <form onSubmit={handleAddLink} className="p-2 bg-white/95 rounded-lg border border-slate-300 shadow-md space-y-1.5 text-xs">
+                <div className="font-semibold text-slate-700 flex justify-between items-center">
+                  <span>외부 웹사이트 링크 추가</span>
+                  <button type="button" onClick={() => setShowLinkInput(false)} className="text-slate-400 hover:text-slate-700">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  placeholder="https://example.com"
+                  value={newLinkUrl}
+                  onChange={(e) => setNewLinkUrl(e.target.value)}
+                  className="w-full px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-blue-500"
+                  autoFocus
+                />
+                <input
+                  type="text"
+                  placeholder="링크 이름 (선택)"
+                  value={newLinkTitle}
+                  onChange={(e) => setNewLinkTitle(e.target.value)}
+                  className="w-full px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-blue-500"
+                />
+                <div className="flex justify-end gap-1 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowLinkInput(false)}
+                    className="px-2 py-0.5 rounded text-slate-600 hover:bg-slate-200"
+                  >
+                    취소
+                  </button>
+                  <button type="submit" className="px-2.5 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">
+                    추가
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
 
           {/* 하단 커스터마이징 툴바 */}
-          <div className="mt-3 pt-2 border-t border-black/10 flex items-center justify-between text-slate-600 relative">
+          <div className="mt-2 pt-2 border-t border-black/10 flex items-center justify-between text-slate-600 relative shrink-0">
             <div className="flex items-center space-x-1">
               {/* 색상 팔레트 */}
               <div className="relative">
@@ -615,9 +686,121 @@ export function StickyNoteCard({
               />
             </div>
 
-            <span className="text-[10px] text-slate-500 opacity-70">
-              {note.createdAt ? new Date(note.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-            </span>
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 opacity-75">
+              <span title="우클릭 시 메뉴 표시">우클릭:메뉴</span>
+              <span>•</span>
+              <span>{note.createdAt ? new Date(note.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+            </div>
+          </div>
+
+          {/* 2) 크기 조절 리사이즈 핸들 (우측 하단 코너 마우스 드래깅) */}
+          <div
+            onMouseDown={handleMouseDownResize}
+            title="드래그하여 메모 크기 조절"
+            className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize flex items-end justify-end p-1 text-slate-400 hover:text-slate-800 transition-colors z-20 group"
+          >
+            <svg viewBox="0 0 10 10" className="w-2.5 h-2.5 fill-current opacity-40 group-hover:opacity-90">
+              <circle cx="8" cy="8" r="1.2" />
+              <circle cx="4" cy="8" r="1.2" />
+              <circle cx="8" cy="4" r="1.2" />
+            </svg>
+          </div>
+        </div>
+      )}
+
+      {/* 1) 마우스 우클릭 시 표시되는 컨텍스트 메뉴 (메모 삭제 기능 포함) */}
+      {contextMenu.visible && (
+        <div
+          style={{
+            position: 'fixed',
+            left: Math.min(contextMenu.x, window.innerWidth - 180),
+            top: Math.min(contextMenu.y, window.innerHeight - 220),
+            zIndex: 99999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-44 bg-white/95 backdrop-blur-md rounded-xl shadow-2xl border border-slate-200 py-1 text-xs text-slate-700 select-none animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div className="px-3 py-1 text-[11px] font-semibold text-slate-400 border-b border-slate-100 flex items-center justify-between">
+            <span>메모 옵션</span>
+            <span className="text-[10px] text-slate-400">포스트잇</span>
+          </div>
+
+          {/* [요구사항 1] 메모 삭제 버튼 */}
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu({ visible: false, x: 0, y: 0 });
+              if (window.confirm('이 메모를 삭제하시겠습니까?')) {
+                onDelete(note.id);
+              }
+            }}
+            className="w-full px-3 py-2 text-left hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-2 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+            <span>메모 삭제</span>
+          </button>
+
+          <div className="my-1 border-t border-slate-100"></div>
+
+          {/* 새 메모 추가 */}
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu({ visible: false, x: 0, y: 0 });
+              onAddRelativeNote(note.x + 30, note.y + 30);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-slate-100 flex items-center gap-2 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5 text-slate-500" />
+            <span>새 메모 추가</span>
+          </button>
+
+          {/* 상단 핀 고정 토글 */}
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu({ visible: false, x: 0, y: 0 });
+              onUpdate(note.id, { isPinned: !note.isPinned });
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-slate-100 flex items-center gap-2 transition-colors"
+          >
+            <Pin className={`w-3.5 h-3.5 text-slate-500 ${note.isPinned ? 'fill-current' : ''}`} />
+            <span>{note.isPinned ? '상단 핀 해제' : '상단 핀 고정'}</span>
+          </button>
+
+          {/* 접기 / 펼치기 */}
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu({ visible: false, x: 0, y: 0 });
+              onUpdate(note.id, { isCollapsed: !note.isCollapsed });
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-slate-100 flex items-center gap-2 transition-colors"
+          >
+            {note.isCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronUp className="w-3.5 h-3.5 text-slate-500" />}
+            <span>{note.isCollapsed ? '메모 펼치기' : '메모 접기'}</span>
+          </button>
+
+          <div className="my-1 border-t border-slate-100"></div>
+
+          {/* 빠른 배경색 변경 */}
+          <div className="px-3 py-1.5">
+            <span className="text-[10px] text-slate-400 block mb-1">배경색 변경</span>
+            <div className="flex gap-1">
+              {PASTEL_THEMES.map(theme => (
+                <button
+                  key={theme.id}
+                  type="button"
+                  style={{ backgroundColor: theme.dot }}
+                  title={theme.name}
+                  onClick={() => {
+                    onUpdate(note.id, { themeId: theme.id });
+                    setContextMenu({ visible: false, x: 0, y: 0 });
+                  }}
+                  className={`w-4 h-4 rounded-full border border-black/20 hover:scale-125 transition-transform ${note.themeId === theme.id ? 'ring-1 ring-blue-500' : ''}`}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}
